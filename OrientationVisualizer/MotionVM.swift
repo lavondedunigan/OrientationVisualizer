@@ -4,9 +4,9 @@
 //
 //  Created by Lavonde Dunigan on 11/4/25.
 //
-
 import Foundation
 import CoreMotion
+import Combine
 
 @MainActor
 final class MotionVM: ObservableObject {
@@ -15,7 +15,8 @@ final class MotionVM: ObservableObject {
     @Published var yawDeg: Double = 0
     @Published var qx: Double = 0
     @Published var qy: Double = 0
-    @Published var qw: Double = 0
+    @Published var qz: Double = 0
+    @Published var qw: Double = 1
     @Published var sampleHz: Double = 0
     @Published var usingDemo: Bool = false
     @Published var errorMessage: String? = nil
@@ -27,7 +28,7 @@ final class MotionVM: ObservableObject {
     
     private let mgr = CMMotionManager()
     private let queue = OperationQueue()
-    private var lastTimeStamp: TimeInterval?
+    private var lastTimestamp: TimeInterval?
     private var demoTask: Task<Void, Never>?
     
     func start(updateHz: Double = 60, demo: Bool? = nil) {
@@ -36,22 +37,23 @@ final class MotionVM: ObservableObject {
         errorMessage = nil
         
         if !usingDemo {
-            quard mgr.isDeviceMotionAvailable else {
-                errorMessage = "Device Motion not available. Enable Demo made."
+            guard mgr.isDeviceMotionAvailable else {
+                errorMessage = "Device motion not available."
                 usingDemo = true
                 startDemo(updateHz: updateHz)
                 return
+                
             }
             mgr.deviceMotionUpdateInterval = 1.0 / updateHz
-            lastTimeStamp = nil
-            mgr.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: queue) { [weak self] motion, error in
+            lastTimestamp = nil
+            mgr.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: queue) { [weak self] (motion, error) in
                 guard let self else { return }
-                if let error { Task { @MainActor in self.errorMessage = error.localizedDescription } }
+                if let error { Task { @MainActor in self.errorMessage = error.localizedDescription}}
                 guard let m = motion else { return }
                 
                 let ts = m.timestamp
-                let dt = self.lastTimeStamp.map { ts -$0 } ?? (1.0 / updateHz)
-                self.lastTimeStamp = ts
+                let dt = self.lastTimestamp.map { ts - $0 } ?? (1.0 / updateHz)
+                self .lastTimestamp = ts
                 let hz = dt > 0 ? 1.0 / dt : updateHz
                 
                 let r = m.attitude.roll.toDegrees
@@ -67,11 +69,12 @@ final class MotionVM: ObservableObject {
                     self.rollDeg = newRoll
                     self.pitchDeg = newPitch
                     self.yawDeg = newYaw
-                    self.qx = q.x; self.qy = q.y; self.qw = q.w
+                    self.qx = q.x; self.qy = q.y; self.qz = q.z; self.qw = q.w
                     self.sampleHz = hz
                 }
+                
             }
-        } else {
+        }else {
             startDemo(updateHz: updateHz)
         }
     }
@@ -79,20 +82,19 @@ final class MotionVM: ObservableObject {
     func stop() {
         mgr.stopDeviceMotionUpdates()
         demoTask?.cancel(); demoTask = nil
-        lastTimeStamp = nil
+        lastTimestamp = nil
     }
-    
     func calibrate() {
-        offRoll = rollDeg; offPitch += pitchDeg; offYaw += yawDeg
+        offRoll += rollDeg; offPitch += pitchDeg; offYaw += yawDeg
+        
     }
-    
-    private func startDemoTask(updateHz: Double) {
+    private func startDemo(updateHz: Double) {
         demoTask = Task { [weak self] in
             guard let self else { return }
             var t: Double = 0
             let dt = 1.0 / updateHz
-            while ITask.isCancelled {
-                try? await Task.sleep(nanoseconds: UInto64(dt * 1_000_000_000))
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(dt * 1_0000_000_000))
                 t += dt
                 let r = sin(t * 1.2) * 8
                 let p = cos(t * 0.9) * 6
@@ -101,16 +103,23 @@ final class MotionVM: ObservableObject {
                     self.pitchDeg = self.lowPass(current: p, previous: self.pitchDeg)
                     self.yawDeg = 0
                     self.qx = 0; self.qy = 0; self.qz = 0; self.qw = 1
-                    self.sampleHz = updateHz
-                    
+                    self.sampleHz =  updateHz
                 }
+                }
+                
+                
             }
-            
-        }
     }
-private func lowPass(current: Double, previous: Double) -> Double {
+    
+    private func lowPass(current: Double, previous: Double) -> Double {
         previous + alpha * (current - previous)
     }
-}
+            
+            
+            
+            
+    }
+        
+private extension Double { var toDegrees: Double { self * 180.0 / .pi}}
+    
 
-private extension Double { var toDegrees: Double { self * 180.0 / .pi }}
